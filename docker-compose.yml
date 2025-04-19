@@ -1,0 +1,139 @@
+version: '3.8'
+
+services:
+  # Frontend service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000/api
+    depends_on:
+      - api
+    networks:
+      - osint-network
+
+  # API service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/osintdb
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=your_secret_key_here
+    depends_on:
+      - postgres
+      - redis
+      - elasticsearch
+    networks:
+      - osint-network
+
+  # Celery worker
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: celery -A worker worker --loglevel=info
+    volumes:
+      - ./backend:/app
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/osintdb
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - api
+      - redis
+      - postgres
+    networks:
+      - osint-network
+
+  # PostgreSQL database
+  postgres:
+    image: postgres:14
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=osintdb
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - osint-network
+
+  # Redis for task queue
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - osint-network
+
+  # Elasticsearch for text search
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.0
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    networks:
+      - osint-network
+
+  # Neo4j for graph relationships
+  neo4j:
+    image: neo4j:4.4
+    ports:
+      - "7474:7474"  # HTTP
+      - "7687:7687"  # Bolt
+    environment:
+      - NEO4J_AUTH=neo4j/password
+    volumes:
+      - neo4j-data:/data
+    networks:
+      - osint-network
+
+  # Nginx as reverse proxy
+  nginx:
+    image: nginx:1.21
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - frontend
+      - api
+    networks:
+      - osint-network
+    
+  # PhoneInfoga for phone number analysis (containerized tool)
+  phoneinfoga:
+    image: sundowndev/phoneinfoga:latest
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    networks:
+      - osint-network
+
+volumes:
+  postgres-data:
+  redis-data:
+  elasticsearch-data:
+  neo4j-data:
+
+networks:
+  osint-network:
+    driver: bridge
